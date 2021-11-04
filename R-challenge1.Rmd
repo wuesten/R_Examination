@@ -1,0 +1,186 @@
+---
+title: "R Challenge Part 1"
+author: "Tom Wüsten"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_folding: show  
+    highlight: tango
+    number_sections: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message = FALSE)
+```
+
+
+# A Explanations
+## Rules
+- Correct results can be obtained in multiple, different ways. 
+- Results can depend on the data cleaning approach. Hence, it is possible that different sets of results are correct.
+- It is not necessary to comment the code or results. However, commenting can be helpful to clarify why you take a particular approach, or if you note that your results are not entirely correct.
+- I strongly recommend digging into packages such as stringr and lubridate for some of the data processing steps.
+- Only include the answers to the posed questions into this Rmd file, not some additional analysis that you have performed.
+- When you are finished, please upload both the Rmd and the knitted html file.
+
+## Data
+This R challenge is about the history of Olympic Games. The following four data sets are needed for this project:
+
+- **athletes.csv** contains metadata on athletes, e.g. their name and sex
+- **games.tsv** contains metadata on the Olympic Games, e.g. start and end dates
+- **results.csv** contains information on results: Which athlete participated in which Olympic Games and disciplines, achieving which position?
+
+# B Tasks
+Load all packages that you need here.
+```{r}
+library(tidyverse)
+library(lubridate)
+library(stringr)
+```
+
+## Task 1 (5 points)
+Read in the **results** data set. Then count the total number of observations per country, and show the top 10 countries
+
+```{r}
+df_result <- read_csv(file= "results.csv")
+observations_per_country <- df_result %>% group_by(country) %>% count() %>% arrange(desc(n)) %>% head(10)
+show(observations_per_country)
+```
+
+Count the total number of observations for Germany in all Winter Games. Note: Germany appears in the data with 3 different names (and codes), due to the fact that Germany was split into West and East. 
+
+```{r}
+# Manually check after the country names of Germany
+df_all_german <- df_result %>% filter(country ==  "West Germany" | country == "East Germany" | country == "Germany") %>%
+                filter(season == "Winter") %>% 
+                summarise(observation = n()) %>% mutate(Country = "All German States")
+show(df_all_german)
+```
+
+
+
+## Task 2 (15 points)
+Read in the data set **athletes.csv** and join it with the **results**. Briefly explain which join type you are using and why.
+
+
+
+```{r}
+df_athlets <- read_delim(file= "athletes.csv", delim = ";")
+# Data Cleaning
+df_athlets <- df_athlets %>% mutate(name = gsub('•',' ',name))
+# Left join: because the athlete table are metadata. if some values are missing its okay for our fact table
+df_results_with_athlets <- df_result %>% left_join(df_athlets, by = "athlete")
+```
+
+
+Using the joined data, calculate the average height and the average weight of all male participants.
+
+```{r}
+#Splitting measurments into height and weight
+df_results_with_athlets <- df_results_with_athlets %>% separate(measurements, c('height', 'weight'), '/') %>% mutate(weight = gsub(' kg','',weight), height = gsub(' cm','',height))
+
+#Change column height & weight ro numeric
+df_results_with_athlets <- df_results_with_athlets %>% mutate(weight = as.numeric(weight), height = as.numeric(height))
+
+#Rename Columns Weight and Height and add units
+df_results_with_athlets <- df_results_with_athlets %>% rename('Height_in_cm' = height, 'Weight_in_kg' = weight)
+
+df_avg_height_weight <- df_results_with_athlets %>% select(sex, Weight_in_kg, Height_in_cm) %>%
+                        filter(sex == "Male") %>% summarise('Average Height in cm' =
+                        round(mean(Height_in_cm, na.rm = TRUE),digits = 1),
+                        'Average Weight in kg' = round(mean(Weight_in_kg, na.rm = TRUE),digits= 1))
+
+show(df_avg_height_weight)
+```
+
+Identify the tallest athlete (regarding variable height) and show all available information for this athlete in the joined data set.
+
+```{r}
+tallest_person <- df_results_with_athlets %>% arrange(desc(Height_in_cm, na.rm = TRUE)) %>% head(1)
+show(tallest_person)
+```
+
+## Task 3 (15 points)
+
+Read in the data set **games.tsv** and join it with your existing data set. Briefly explain: For which Olympic Games do you have metadata, but no results? What is the reason for the missing results?
+
+```{r}
+df_games <- read_delim("games.tsv", delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+#Left join: because the games are metadata
+df_results_with_athlets_games <- df_results_with_athlets %>% left_join(df_games, by=c("year","season"))
+
+#Anti join for checking missing results
+# metadata for games but no results in df_missing_results
+# games aren't held because of war or in the future
+df_missing_values <- df_games %>% anti_join(df_results_with_athlets, by=c("year","season"))
+show(df_missing_values)
+```
+
+
+Create a new variable that contains the athletes' `birthday`, formatted as a date column. Then create another variable that holds the age of athletes in years at the opening of the Olympic Games.
+
+```{r}
+df_results_with_athlets_games <- df_results_with_athlets_games %>%
+                                separate(born, c('birth_day', 'birth_place'), " in ", extra= 'merge') %>%
+                                mutate(birthday = dmy(birth_day)) %>%
+                                mutate(age_at_games= year(games_opened)-year(birthday))
+```
+
+Calculate the average age per sport of the female participants. Then print out a ranking of the 10 sports with the lowest average age
+```{r}
+avg_female_per_sport <- df_results_with_athlets_games %>% filter(sex == "Female") %>% group_by(sport) %>%
+                    summarise(avg_age_female_sport = round(mean(age_at_games, na.rm = TRUE), digits = 0)) %>%
+                    arrange(avg_age_female_sport) %>% head(10)
+show(avg_female_per_sport)
+```
+
+## Task 4 (10 points)
+Calculate the medal table of the Olympic Summer Games 2016 in Rio de Janeiro and display the top 10 countries (ordered by Gold, Silver, and then Bronze medals). Your final table should look like this: <https://en.wikipedia.org/wiki/2016_Summer_Olympics_medal_table>. Hint 1: In team sports such as Handball, many players receive a gold medal, but for the countries' medal table it only counts as one gold medal. You can recognize team sports by the fact that the variable `team` is not missing. 
+
+```{r}
+       
+rio_medal_table <- df_results_with_athlets_games %>%  filter(year == 2016, medal %in% c('Bronze','Silver','Gold')) %>% select(name, sport, discipline, country, country_code, medal, team) %>% mutate(identifier = ifelse(is.na(team), paste(name, sport, discipline), paste(country, sport,discipline))) %>% group_by(country_code, medal) %>% distinct(identifier, .keep_all=TRUE)  %>% summarise(country = first(country), number_of_medals = n()) %>% pivot_wider(names_from = medal, values_from = number_of_medals) %>% replace(is.na(.), 0) %>% mutate(Total = sum(Silver, Bronze, Gold)) %>% relocate(Gold, .before = Silver) %>% arrange(-Bronze) %>% arrange(-Silver) %>% arrange(-Gold) %>% mutate(country_code = paste('(', country_code,')', sep='')) %>% unite(NOC, c('country', 'country_code'), sep=' ') %>% mutate(Rank = row_number()) %>% relocate(Rank, .before=NOC) 
+
+previous_medals = ''
+previous_rank = 1
+index = 1
+
+for (row in 1:nrow(rio_medal_table)){
+  
+  gold <- rio_medal_table[['Gold']][row]
+  silver <- rio_medal_table[['Silver']][row]
+  bronze <- rio_medal_table[['Bronze']][row]
+  medals <- paste(gold, silver, bronze)
+  
+  if(previous_medals == medals){
+    rio_medal_table[['Rank']][row] <- previous_rank
+    index <- index + 1
+  }
+  else{
+    rio_medal_table[['Rank']][row] <- index
+    previous_rank <- index
+    index <- index +1
+    previous_medals <- medals
+  }
+  
+}
+show(rio_medal_table)
+```
+
+## Task 5 (5 points)
+Some of the athletes have started for multiple countries (e.g. due to migration or other reasons). Show all athletes that have started for at least 4 countries. Then choose one of these athletes and display the 4 countries for which he or she started.
+
+```{r}
+athlets_multiple_countries <- df_results_with_athlets_games %>% mutate(name_country = paste(name, country, sep= " ")) %>%
+                              distinct(name_country, .keep_all = TRUE) %>% group_by(name,birth_day)%>%
+                              summarise(name = first(name), countries = n()) %>% filter(countries >= 4)
+show(athlets_multiple_countries)
+```
+```{r}
+# Choose Irina Lashko
+Irina_Lashko <- df_results_with_athlets_games %>% filter(name == "Irina Lashko") %>% select(country) %>%   distinct(country)
+show(Irina_Lashko)
+```
